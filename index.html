@@ -317,9 +317,12 @@ function api(body){
  var ctl=window.AbortController?new AbortController():null; if(ctl)setTimeout(function(){ctl.abort();},30000);
  return fetch(API,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body),signal:ctl&&ctl.signal}).then(function(r){return r.json();});
 }
-function apiGet(q){
- var ctl=window.AbortController?new AbortController():null; if(ctl)setTimeout(function(){ctl.abort();},30000);
- return fetch(API+(q?"?"+q:""),{cache:"no-store",signal:ctl&&ctl.signal}).then(function(r){return r.json();});
+function apiGet(q,tries){
+ tries=tries==null?1:tries;
+ var ctl=window.AbortController?new AbortController():null; if(ctl)setTimeout(function(){ctl.abort();},35000);
+ return fetch(API+(q?"?"+q:""),{cache:"no-store",signal:ctl&&ctl.signal}).then(function(r){return r.text();})
+  .then(function(t){try{return JSON.parse(t);}catch(e){throw new Error("html");}})
+  .catch(function(e){if(tries>0)return new Promise(function(res){setTimeout(res,1500);}).then(function(){return apiGet(q,tries-1);});throw e;});
 }
 function setState(st){ if(!st)return; S=st; role=st.role||role; S.pending=S.pending||[]; lsSet(LS_STATE,JSON.stringify(S)); }
 function refresh(silent){
@@ -475,7 +478,7 @@ function vAccueil(){
 
 /* ---------- Tâches ---------- */
 function vTaches(){
- var h='<div class="page-head"><div><h1>Tâches</h1><p>'+S.tasks.filter(function(t){return!t.done;}).length+" à faire · "+S.tasks.filter(function(t){return t.done;}).length+" faites</p></div>"+(canEdit()?'<button class="btn sm" data-a="addtask">'+ic("plus")+"Ajouter</button>":"")+"</div>";
+ var h='<div class="page-head"><div><h1>Tâches</h1><p>'+S.tasks.filter(function(t){return!t.done;}).length+" à faire · "+S.tasks.filter(function(t){return t.done;}).length+" faites</p></div>"+'<div class="row-f" style="flex:none">'+(canEdit()?'<button class="btn sm" data-a="addtask">'+ic("plus")+"Ajouter</button>":"")+'<button class="btn sm line" data-a="printroad">'+ic("print")+'Imprimer tout</button><button class="btn sm line" data-a="ics">'+ic("cal")+"Mon agenda</button></div></div>";
  h+='<div class="filters"><button class="chip '+(ui.taskView==="date"?"on":"")+'" data-a="tview" data-v="date">Par échéance</button><button class="chip '+(ui.taskView==="phase"?"on":"")+'" data-a="tview" data-v="phase">Par étape</button><span style="width:10px"></span>'+
   ["tous"].concat(POLES).map(function(p){return'<button class="chip '+(ui.pole===p?"on":"")+'" data-a="tpole" data-v="'+p+'">'+(p==="tous"?"Tous les pôles":'<span class="dot p-'+p+'"></span>'+p)+"</button>";}).join("")+"</div>";
  var list=S.tasks.filter(function(t){return ui.pole==="tous"||t.pole===ui.pole;});
@@ -713,6 +716,16 @@ document.addEventListener("click",function(e){
  case"testmail":api({action:"testmail",code:code}).then(function(j){toast(j.ok?(j.sent?j.sent+" e-mail(s) envoyé(s)":"Rien à envoyer : ajoutez une adresse"):"Envoi impossible : autorisez l’envoi d’e-mails dans Google Apps Script");}).catch(function(){toast("Envoi impossible");});break;
  case"savevit":act("Vitrine",[{op:"set",path:["settings","pitch"],value:val("pitch")},{op:"set",path:["settings","contact"],value:val("contact")},{op:"set",path:["settings","donLink"],value:val("donlink")}]);break;
  case"savename":var sn=val("sitename");if(sn)act("Nom du site",[{op:"set",path:["name"],value:sn}]);break;
+ case"printroad":var w=window.open("","_blank");if(!w){toast("Autorisez les fenêtres pour imprimer");break;}
+  var ph=(S.phases||[]).map(function(p){var l=S.tasks.filter(function(t){return t.phase===p.id;}).sort(function(a,b){return a.due<b.due?-1:1;});if(!l.length)return"";
+   return"<h2>"+(p.id+1)+". "+esc(p.name)+" <small>("+esc(p.range)+")</small></h2>"+l.map(function(t){return'<div class="t"><b>'+(t.done?"☑":"☐")+" "+esc(t.t)+"</b><div class=\"m\">"+fdate(t.due)+" · "+esc(t.pole)+" · "+esc(t.who||t.qui)+"</div>"+(t.note?"<div class=\"m\">"+esc(t.note)+"</div>":"")+(t.steps&&t.steps.length?"<ol>"+t.steps.map(function(s){return"<li>"+esc(s)+"</li>";}).join("")+"</ol>":"")+"</div>";}).join("");}).join("");
+  w.document.write("<!DOCTYPE html><html lang=fr><head><meta charset=utf-8><title>Feuille de route — "+esc(S.name||"Project Londres")+"</title><style>body{font:12px/1.45 Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;color:#012169}h2{font-size:15px;color:#012169;border-bottom:2px solid #012169;padding-bottom:3px;margin-top:22px}h2 small{font-weight:400;color:#666}.t{margin:8px 0 10px;page-break-inside:avoid}.m{color:#555;font-size:11px}ol{margin:4px 0 0 18px;padding:0}li{margin:1px 0}</style></head><body><h1>Feuille de route — "+esc(S.name||"Project Londres")+"</h1><p>Imprimé le "+fdate(today())+" · "+S.tasks.filter(function(t){return t.done;}).length+" tâches faites sur "+S.tasks.length+"</p>"+ph+"</body></html>");
+  w.document.close();setTimeout(function(){w.print();},400);break;
+ case"ics":var L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Project Londres//FR","CALSCALE:GREGORIAN"];
+  function evl(d,t,uid,desc){var s=d.replace(/-/g,""),e=new Date(d+"T12:00:00");e.setDate(e.getDate()+1);var en=e.toISOString().slice(0,10).replace(/-/g,"");L.push("BEGIN:VEVENT","UID:"+uid+"@projectlondres","DTSTAMP:"+new Date().toISOString().replace(/[-:]/g,"").slice(0,15)+"Z","DTSTART;VALUE=DATE:"+s,"DTEND;VALUE=DATE:"+en,"SUMMARY:"+t.replace(/[,;]/g," "),"DESCRIPTION:"+(desc||"").replace(/[,;\n]/g," ").slice(0,500),"END:VEVENT");}
+  (S.events||[]).forEach(function(e){evl(e.date,"Londres : "+e.label,e.id);});
+  S.tasks.filter(function(t){return!t.done&&(ui.pole==="tous"||t.pole===ui.pole);}).forEach(function(t){evl(t.due,"Londres — "+t.t,t.id,(t.who||t.qui)+". "+(t.steps||[]).join(" "));});
+  L.push("END:VCALENDAR");download("project-londres"+(ui.pole!=="tous"?"-"+ui.pole.toLowerCase():"")+".ics","text/calendar",L.join("\r\n"));toast("Ouvrez le fichier pour l’ajouter à votre agenda");break;
  case"export":download("project-londres-sauvegarde-"+today()+".json","application/json",JSON.stringify(S,null,1));break;
  }});
 document.addEventListener("change",function(e){var el=e.target;if(el.getAttribute("data-a")==="cofield"){var o=byId(S.companies,el.getAttribute("data-id"));act(o.name+" : "+el.value,[{op:"set",path:["companies",{id:o.id},el.getAttribute("data-f")],value:el.value}]);}});
